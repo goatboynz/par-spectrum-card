@@ -36,6 +36,21 @@ class PARSpectrumCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    
+    // Auto-capture at 7am daily
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    
+    // Check if it's 7am and we haven't captured today
+    if (hour === 7 && minute < 5) {
+      const today = now.toDateString();
+      if (this._lastAutoCapture !== today) {
+        this._lastAutoCapture = today;
+        setTimeout(() => this.captureSpectrum(), 1000);
+      }
+    }
+    
     this.updateChart();
   }
 
@@ -285,17 +300,26 @@ class PARSpectrumCard extends HTMLElement {
     // Clear canvas
     ctx.clearRect(0, 0, width, height);
 
-    // Find max value
-    const maxValue = this._config.max_value || Math.max(...data.map(d => d.value)) * 1.1;
+    // Find max value (normalize to 100%)
+    const maxValue = Math.max(...data.map(d => d.value));
+    
+    // If no data, show message
+    if (maxValue === 0) {
+      ctx.fillStyle = this._config.theme === 'dark' ? '#9E9E9E' : '#757575';
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Press "Capture Spectrum" to record data', width / 2, height / 2);
+      return;
+    }
 
     // Draw grid
-    this.drawGrid(ctx, padding, chartWidth, chartHeight, maxValue);
+    this.drawGrid(ctx, padding, chartWidth, chartHeight, 100);
 
     // Draw single spectrum curve (McCree style)
     this.drawWavelengthCurve(ctx, data, padding, chartWidth, chartHeight, maxValue);
 
     // Draw axes
-    this.drawAxes(ctx, data, padding, chartWidth, chartHeight, maxValue);
+    this.drawAxes(ctx, data, padding, chartWidth, chartHeight, 100);
   }
 
   drawGrid(ctx, padding, chartWidth, chartHeight, maxValue) {
@@ -322,33 +346,40 @@ class PARSpectrumCard extends HTMLElement {
   }
 
   drawWavelengthCurve(ctx, data, padding, chartWidth, chartHeight, maxValue) {
-    // Create smooth curve through all data points
+    // Normalize data to percentage (0-100%)
     const points = [];
     
     // Generate points for smooth curve
     for (let i = 0; i < data.length; i++) {
       const x = padding.left + (chartWidth / (data.length - 1)) * i;
-      const normalizedValue = data[i].value / maxValue;
-      const y = padding.top + chartHeight - (normalizedValue * chartHeight);
-      points.push({ x, y, color: data[i].color });
+      const percentage = (data[i].value / maxValue) * 100;
+      const y = padding.top + chartHeight - ((percentage / 100) * chartHeight);
+      points.push({ x, y, color: data[i].color, value: percentage });
     }
 
+    // Create vertical gradient (dark at bottom, lighter at top)
+    const vertGradient = ctx.createLinearGradient(0, padding.top + chartHeight, 0, padding.top);
+    vertGradient.addColorStop(0, 'rgba(0, 0, 0, 0.9)');
+    vertGradient.addColorStop(0.3, 'rgba(76, 175, 80, 0.6)');
+    vertGradient.addColorStop(0.6, 'rgba(255, 235, 59, 0.7)');
+    vertGradient.addColorStop(1, 'rgba(244, 67, 54, 0.5)');
+
     // Create horizontal gradient matching spectrum colors
-    const gradient = ctx.createLinearGradient(padding.left, 0, padding.left + chartWidth, 0);
-    gradient.addColorStop(0, 'rgba(156, 39, 176, 0.8)');    // Violet
-    gradient.addColorStop(0.14, 'rgba(63, 81, 181, 0.8)');  // Indigo
-    gradient.addColorStop(0.28, 'rgba(33, 150, 243, 0.8)'); // Blue
-    gradient.addColorStop(0.42, 'rgba(0, 188, 212, 0.8)');  // Cyan
-    gradient.addColorStop(0.56, 'rgba(76, 175, 80, 0.8)');  // Green
-    gradient.addColorStop(0.70, 'rgba(255, 235, 59, 0.8)'); // Yellow
-    gradient.addColorStop(0.84, 'rgba(255, 152, 0, 0.8)');  // Orange
-    gradient.addColorStop(1, 'rgba(244, 67, 54, 0.8)');     // Red
+    const horizGradient = ctx.createLinearGradient(padding.left, 0, padding.left + chartWidth, 0);
+    horizGradient.addColorStop(0, 'rgba(156, 39, 176, 0.7)');    // Violet
+    horizGradient.addColorStop(0.14, 'rgba(63, 81, 181, 0.7)');  // Indigo
+    horizGradient.addColorStop(0.28, 'rgba(33, 150, 243, 0.7)'); // Blue
+    horizGradient.addColorStop(0.42, 'rgba(0, 188, 212, 0.7)');  // Cyan
+    horizGradient.addColorStop(0.56, 'rgba(76, 175, 80, 0.8)');  // Green
+    horizGradient.addColorStop(0.70, 'rgba(255, 235, 59, 0.8)'); // Yellow
+    horizGradient.addColorStop(0.84, 'rgba(255, 152, 0, 0.7)');  // Orange
+    horizGradient.addColorStop(1, 'rgba(244, 67, 54, 0.7)');     // Red
 
     // Draw filled area with gradient
     ctx.beginPath();
-    ctx.moveTo(points[0].x, padding.top + chartHeight);
+    ctx.moveTo(padding.left, padding.top + chartHeight);
     
-    // Draw smooth curve using quadratic curves
+    // Draw smooth curve
     ctx.lineTo(points[0].x, points[0].y);
     
     for (let i = 0; i < points.length - 1; i++) {
@@ -360,13 +391,14 @@ class PARSpectrumCard extends HTMLElement {
     // Last point
     const lastPoint = points[points.length - 1];
     ctx.lineTo(lastPoint.x, lastPoint.y);
-    ctx.lineTo(lastPoint.x, padding.top + chartHeight);
+    ctx.lineTo(padding.left + chartWidth, padding.top + chartHeight);
     ctx.closePath();
     
-    ctx.fillStyle = gradient;
+    // Fill with combined gradient effect
+    ctx.fillStyle = horizGradient;
     ctx.fill();
 
-    // Draw outline
+    // Draw outline with white line
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
     
@@ -377,8 +409,8 @@ class PARSpectrumCard extends HTMLElement {
     }
     
     ctx.lineTo(lastPoint.x, lastPoint.y);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.lineWidth = 3;
     ctx.stroke();
   }
 

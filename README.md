@@ -6,10 +6,11 @@ Perfect for cannabis cultivation, hydroponics, and grow light monitoring!
 
 ## Features
 
-- 🌈 Beautiful spectral power distribution visualization
+- 🌈 Beautiful spectral power distribution visualization (McCree curve style)
 - 📊 Displays 8 wavelength channels (415nm - 680nm) + NIR
-- 🎨 Color-coded to match actual visible spectrum
-- 💡 Smooth gradient area curves (like professional grow light spectrum charts)
+- 🎨 Color-coded gradient fill matching visible spectrum
+- 💡 Smooth single curve (like professional PAR charts)
+- 📸 Manual capture button + automatic 7am daily capture
 - 📱 Responsive design
 - ⚙️ Highly configurable
 
