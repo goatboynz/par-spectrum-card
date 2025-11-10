@@ -60,11 +60,43 @@ class PARSpectrumCard extends HTMLElement {
         }
         
         .card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 16px;
+        }
+        
+        .title {
           font-size: 18px;
           font-weight: 700;
           color: ${isDark ? '#9C27B0' : '#7B1FA2'};
-          margin-bottom: 16px;
-          text-align: center;
+        }
+        
+        .capture-button {
+          background: linear-gradient(135deg, #9C27B0, #7B1FA2);
+          color: white;
+          border: none;
+          border-radius: 8px;
+          padding: 10px 20px;
+          font-size: 14px;
+          font-weight: 600;
+          cursor: pointer;
+          box-shadow: 0 2px 8px rgba(156, 39, 176, 0.3);
+          transition: all 0.3s ease;
+        }
+        
+        .capture-button:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(156, 39, 176, 0.4);
+        }
+        
+        .capture-button:active {
+          transform: translateY(0);
+        }
+        
+        .capture-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
         
         .spectrum-container {
@@ -133,31 +165,44 @@ class PARSpectrumCard extends HTMLElement {
           transform: translateY(-50%) rotate(-90deg);
           transform-origin: center;
         }
+        
+        .last-capture {
+          text-align: center;
+          font-size: 11px;
+          color: ${isDark ? '#9E9E9E' : '#757575'};
+          margin-top: 8px;
+        }
       </style>
       
       <ha-card>
-        <div class="card-header">${this._config.title}</div>
+        <div class="card-header">
+          <div class="title">${this._config.title}</div>
+          <button class="capture-button" id="captureBtn">📸 Capture Spectrum</button>
+        </div>
         <div class="spectrum-container">
           <canvas class="spectrum-canvas" id="spectrumCanvas"></canvas>
           <div class="axis-label x-axis-label">Wavelength (nanometers)</div>
-          <div class="axis-label y-axis-label">Intensity</div>
+          <div class="axis-label y-axis-label">Relative Intensity (%)</div>
         </div>
+        <div class="last-capture" id="lastCapture"></div>
         ${this._config.show_legend ? '<div class="legend" id="legend"></div>' : ''}
       </ha-card>
     `;
+    
+    // Add button click handler
+    const captureBtn = this.shadowRoot.getElementById('captureBtn');
+    if (captureBtn) {
+      captureBtn.addEventListener('click', () => this.captureSpectrum());
+    }
   }
 
-  updateChart() {
+  captureSpectrum() {
     if (!this._hass || !this._config.entities) return;
 
-    // Check if we should show the chart
-    if (this._config.show_only_when_on) {
-      const entity = this._hass.states[this._config.show_only_when_on];
-      if (!entity || entity.state !== 'on') {
-        this.shadowRoot.querySelector('.spectrum-container').innerHTML = 
-          '<div class="no-data">💡 Lights Off<br><br>Spectrum data only available when grow lights are active</div>';
-        return;
-      }
+    const captureBtn = this.shadowRoot.getElementById('captureBtn');
+    if (captureBtn) {
+      captureBtn.disabled = true;
+      captureBtn.textContent = '📸 Capturing...';
     }
 
     // Get sensor values
@@ -181,12 +226,40 @@ class PARSpectrumCard extends HTMLElement {
       return { ...w, value };
     });
 
+    // Store captured data
+    this._capturedData = data;
+    this._captureTime = new Date();
+
     // Draw the spectrum chart
     this.drawSpectrum(data);
 
     // Update legend
     if (this._config.show_legend) {
       this.updateLegend(data);
+    }
+
+    // Update last capture time
+    const lastCaptureEl = this.shadowRoot.getElementById('lastCapture');
+    if (lastCaptureEl) {
+      lastCaptureEl.textContent = `Last captured: ${this._captureTime.toLocaleTimeString()}`;
+    }
+
+    // Re-enable button
+    setTimeout(() => {
+      if (captureBtn) {
+        captureBtn.disabled = false;
+        captureBtn.textContent = '📸 Capture Spectrum';
+      }
+    }, 1000);
+  }
+
+  updateChart() {
+    // Only update if we have captured data
+    if (this._capturedData) {
+      this.drawSpectrum(this._capturedData);
+      if (this._config.show_legend) {
+        this.updateLegend(this._capturedData);
+      }
     }
   }
 
@@ -218,10 +291,8 @@ class PARSpectrumCard extends HTMLElement {
     // Draw grid
     this.drawGrid(ctx, padding, chartWidth, chartHeight, maxValue);
 
-    // Draw spectrum curves
-    data.forEach((wavelength, index) => {
-      this.drawWavelengthCurve(ctx, wavelength, data, padding, chartWidth, chartHeight, maxValue);
-    });
+    // Draw single spectrum curve (McCree style)
+    this.drawWavelengthCurve(ctx, data, padding, chartWidth, chartHeight, maxValue);
 
     // Draw axes
     this.drawAxes(ctx, data, padding, chartWidth, chartHeight, maxValue);
@@ -250,36 +321,63 @@ class PARSpectrumCard extends HTMLElement {
     }
   }
 
-  drawWavelengthCurve(ctx, wavelength, allData, padding, chartWidth, chartHeight, maxValue) {
-    const points = this.generateCurvePoints(wavelength, allData, padding, chartWidth, chartHeight, maxValue);
+  drawWavelengthCurve(ctx, data, padding, chartWidth, chartHeight, maxValue) {
+    // Create smooth curve through all data points
+    const points = [];
     
-    if (points.length === 0) return;
+    // Generate points for smooth curve
+    for (let i = 0; i < data.length; i++) {
+      const x = padding.left + (chartWidth / (data.length - 1)) * i;
+      const normalizedValue = data[i].value / maxValue;
+      const y = padding.top + chartHeight - (normalizedValue * chartHeight);
+      points.push({ x, y, color: data[i].color });
+    }
 
-    // Create gradient
-    const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartHeight);
-    const color = wavelength.color;
-    const rgb = this.hexToRgb(color);
-    gradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.6)`);
-    gradient.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.05)`);
+    // Create horizontal gradient matching spectrum colors
+    const gradient = ctx.createLinearGradient(padding.left, 0, padding.left + chartWidth, 0);
+    gradient.addColorStop(0, 'rgba(156, 39, 176, 0.8)');    // Violet
+    gradient.addColorStop(0.14, 'rgba(63, 81, 181, 0.8)');  // Indigo
+    gradient.addColorStop(0.28, 'rgba(33, 150, 243, 0.8)'); // Blue
+    gradient.addColorStop(0.42, 'rgba(0, 188, 212, 0.8)');  // Cyan
+    gradient.addColorStop(0.56, 'rgba(76, 175, 80, 0.8)');  // Green
+    gradient.addColorStop(0.70, 'rgba(255, 235, 59, 0.8)'); // Yellow
+    gradient.addColorStop(0.84, 'rgba(255, 152, 0, 0.8)');  // Orange
+    gradient.addColorStop(1, 'rgba(244, 67, 54, 0.8)');     // Red
 
-    // Draw filled area
+    // Draw filled area with gradient
     ctx.beginPath();
     ctx.moveTo(points[0].x, padding.top + chartHeight);
-    points.forEach(point => {
-      ctx.lineTo(point.x, point.y);
-    });
-    ctx.lineTo(points[points.length - 1].x, padding.top + chartHeight);
+    
+    // Draw smooth curve using quadratic curves
+    ctx.lineTo(points[0].x, points[0].y);
+    
+    for (let i = 0; i < points.length - 1; i++) {
+      const xMid = (points[i].x + points[i + 1].x) / 2;
+      const yMid = (points[i].y + points[i + 1].y) / 2;
+      ctx.quadraticCurveTo(points[i].x, points[i].y, xMid, yMid);
+    }
+    
+    // Last point
+    const lastPoint = points[points.length - 1];
+    ctx.lineTo(lastPoint.x, lastPoint.y);
+    ctx.lineTo(lastPoint.x, padding.top + chartHeight);
     ctx.closePath();
+    
     ctx.fillStyle = gradient;
     ctx.fill();
 
-    // Draw line
+    // Draw outline
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
-    points.forEach(point => {
-      ctx.lineTo(point.x, point.y);
-    });
-    ctx.strokeStyle = color;
+    
+    for (let i = 0; i < points.length - 1; i++) {
+      const xMid = (points[i].x + points[i + 1].x) / 2;
+      const yMid = (points[i].y + points[i + 1].y) / 2;
+      ctx.quadraticCurveTo(points[i].x, points[i].y, xMid, yMid);
+    }
+    
+    ctx.lineTo(lastPoint.x, lastPoint.y);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
     ctx.lineWidth = 2;
     ctx.stroke();
   }

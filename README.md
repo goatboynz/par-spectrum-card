@@ -73,7 +73,7 @@ title: PAR Spectrum Distribution
 height: 400
 show_legend: true
 show_values: true
-show_only_when_on: switch.grow_lights  # Optional - only show when lights are on
+# Removed - now uses capture button instead
 max_value: 70000  # Optional - auto-scales if not set
 theme: dark  # dark or light
 ```
